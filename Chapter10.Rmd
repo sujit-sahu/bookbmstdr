@@ -1,0 +1,777 @@
+---
+title: "Chapter 10: Bayesian modeling for areal unit data"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: github
+    toc: true
+    number_sections: true
+date: "`r Sys.Date()`"
+author: 
+- name: <a href="https://www.sujitsahu.com/"> Sujit K. Sahu</a> 
+  affiliation:  University of Southampton
+  email: S.K.Sahu@soton.ac.uk 
+package: bmstdr
+abstract: >
+  This file contains all the code for reproducing the figures in Chapter 10. 
+keywords: Areal data, CAR models, geostatistical data modeling, model choice and validation
+---
+```{r style, echo = FALSE, results = 'asis'}
+  BiocStyle::markdown()
+```
+
+```{r globalsetup, eval=TRUE, echo=FALSE, message=FALSE}
+rm(list=ls())
+# Root directory should be the current directory containing this file
+#knitr::opts_knit$set(root.dir '....')
+knitr::opts_chunk$set(collapse = TRUE)
+```
+
+```{r loadlibraries, echo = TRUE, results = 'asis', message=FALSE}
+library(bmstdr)
+library(ggplot2)
+library(RColorBrewer)
+library(ggpubr)
+library(GGally)
+library(doBy)
+
+```
+
+```{r initialsetup, echo = TRUE, eval=TRUE, message =FALSE}
+# Download mapfiles and data files from https://github.com/sujit-sahu/bookbmstdr
+## Note the start time
+start.time<-proc.time()[3]
+figurepath <- "figures/chap10figures/"
+filepath <- "txttables/"
+load(file="mapfiles/englamap.rda")
+load(file="mapfiles/engregmap.rda")
+dpath <- "datafiles/" # Folder containing the data files 
+longrun <- FALSE  # Should we run the model to check the results. 
+# If FALSE we use the results, e.g. tables, figures and model fits from previous runs
+# If TRUE it takes more than two hours to run the models. 
+
+set.seed(44)
+vs <- sample(nrow(engdeaths), 0.1 * nrow(engdeaths))
+set.seed(44)
+vst <- sample(nrow(engtotals), 0.1 * nrow(engtotals))
+
+if (longrun) {
+ N <- 120000
+ burn.in <- 20000
+ thin <- 10
+ 
+if (!file.exists(figurepath)) {
+  dir.create(figurepath)
+}  
+
+if (!file.exists(filepath)) {
+  dir.create(filepath)
+}  
+ dir.create("engdeaths/")
+ 
+} 
+
+```
+
+
+# Code to reproduce Figure10.1
+
+
+```{r figure10.1, echo=TRUE, eval=TRUE}
+
+comparelinks <- function()
+{
+  x <- seq(from = -5., to = 5., length = 200)
+  y <- pnorm(x)
+  z <- 1./(1. + exp( - x))
+  compl <- 1- exp(-exp(x))
+  plot(x, y, type = "l", main = "Comparison of Probit, Logit and Complementary log log links", col=2)
+  lines(x, z, lty = 2., col=4)
+  lines(x, compl, lty=3, col=6)
+  legend(-4., 0.8, legend = c("Probit", "Logit", "cloglog"),
+         lty = c(1., 2., 3), col=c(2, 4, 6))
+  
+  k <- length(x)
+  ldata <- data.frame(x=rep(x, 3), 
+                      link=c(rep("Logit", k), rep("Probit", k),rep("Loglog", k)),   
+                      values=c(z, y, compl), 
+                      ltype=rep(1:3, each=k))
+  ldata$link <- as.factor(ldata$link)
+  ldata$link <- factor(ldata$link, levels=levels(ldata$link))
+  ldata$ltype <- as.factor(ldata$ltype)
+  head(ldata)
+  linkplot <- ggplot() + 
+    geom_line(data=ldata, aes(x=x, y=values, group=link, 
+                              color=link, linetype=link), size=1) +
+    labs(x ="Linear predictor", y = "Probability")+
+    theme(legend.position=c(0.20, 0.75)) #+ 
+  #  guides(guide_legend(reverse=TRUE))
+  linkplot
+}
+linkplot <- comparelinks()
+ggsave(filename=paste0(figurepath, "link_functions.png"))
+```
+
+```{r table10.1, echo=TRUE, eval=TRUE}
+f1 <-  noofhighweeks ~ jsa + log10(houseprice) + log(popdensity) + sqrt(no2) 
+## independent logistic regression 
+if (longrun) {
+# nweek <- engtotals$nweek
+M1 <- Bcartime(formula=f1,   data=engtotals, family="binomial", trials="nweek", N=N, burn.in = burn.in, thin=thin, verbose = FALSE) 
+
+DIC <- c(M1$mchoice[2], M1$mchoice[1], rep(NA, 5))
+WAIC <- c(M1$mchoice[4], M1$mchoice[3], rep(NA, 5))
+table10.1 <- rbind(M1$params, DIC, WAIC)
+# xtable(table10.1, digits=3)
+dput(table10.1, file=paste0(filepath, "table10.1.txt"))
+M1.v <- Bcartime(formula=f1,   data=engtotals, family="binomial", trials="nweek", N=N, burn.in = burn.in, thin=thin, verbose = FALSE, 
+      validrows=vst) 
+vresult10.1 <- M1.v$stats
+dput(vresult10.1, file=paste0(filepath, "validationstats_table10.1.txt"))
+summary(M1.v)
+} else {
+  table10.1 <- dget(file=paste0(filepath, "table10.1.txt"))
+  vresult10.1 <- dget(file=paste0(filepath, "validationstats_table10.1.txt"))
+}
+round(table10.1, 3)
+print(vresult10.1)
+```
+
+```{r table10.2, echo=TRUE, eval=TRUE}
+## independent Poisson regression
+f2 <-  covid ~ offset(logEdeaths) + jsa + log10(houseprice) + log(popdensity) + sqrt(no2) 
+if (longrun) {
+  
+M2 <- Bcartime(formula=f2,   data=engtotals, family="poisson", 
+               N=N, burn.in = burn.in, thin=thin, verbose = FALSE) 
+
+table10.2 <- M2$params
+DIC <- c(M2$mchoice[2], M2$mchoice[1], rep(NA, 5))
+WAIC <- c(M2$mchoice[4], M2$mchoice[3], rep(NA, 5))
+table10.2 <- rbind(M2$params, DIC, WAIC)
+# xtable(table10.1, digits=3)
+dput(table10.2, file=paste0(filepath, "table10.2.txt"))
+
+M2.v <- Bcartime(formula=f2,   data=engtotals, family="poisson", 
+               N=N, burn.in = burn.in, thin=thin, verbose = FALSE, validrows = vst) 
+vresult10.2 <- M2.v$stats
+dput(vresult10.2, file=paste0(filepath, "validationstats_table10.2.txt"))
+} else {
+  table10.2 <- dget(file=paste0(filepath, "table10.2.txt"))
+  vresult10.2 <- dget(file=paste0(filepath, "validationstats_table10.2.txt"))
+}
+round(table10.2, 3)
+print(vresult10.2)
+```
+
+```{r table10.3, echo=TRUE, eval=TRUE}
+## independent Poisson regression
+f3 <-  sqrt(no2) ~  jsa + log10(houseprice) + log(popdensity) 
+
+if (longrun) {
+  M3 <- Bcartime(formula=f3,   data=engtotals, family="gaussian", 
+               N=N, burn.in = burn.in , thin=thin, verbose = FALSE) 
+DIC <- c(M3$mchoice[2], M3$mchoice[1], rep(NA, 5))
+WAIC <- c(M3$mchoice[4], M3$mchoice[3], rep(NA, 5))
+table10.3 <- rbind(M3$params, DIC, WAIC)
+M3.v <- Bcartime(formula=f3,   data=engtotals, family="gaussian", 
+               N=N, burn.in = burn.in , thin=thin, verbose = FALSE, 
+               validrows=vst) 
+
+#rownames(table10.4)[9:10] <- c("DIC", "WAIC")
+dput(table10.3, file=paste0(filepath, "table10.3.txt"))
+vresult10.3 <- M3.v$stats
+dput(vresult10.3, file=paste0(filepath, "validationstats_table10.3.txt"))
+} else {
+  table10.3 <- dget(file=paste0(filepath, "table10.3.txt"))
+   vresult10.3 <- dget(file=paste0(filepath, "validationstats_table10.3.txt"))
+}
+round(table10.3, 3)
+print(vresult10.3)
+```
+
+```{r, m1spatial, echo=TRUE, eval=TRUE, results='hide', message=FALSE}
+
+f1 <-  noofhighweeks ~ jsa + log10(houseprice) + log(popdensity) + sqrt(no2)
+if (longrun) { 
+M1.leroux <- Bcartime(formula=f1, data=engtotals, scol="spaceid", W=Weng, 
+                      family="binomial", trials="nweek", model="leroux", 
+                      N=N, burn.in = burn.in , thin=thin, verbose = FALSE)
+
+M1.bym <- Bcartime(formula=f1, data=engtotals, scol="spaceid", W=Weng, 
+              family="binomial", trials="nweek", model="bym", 
+              N=N, burn.in = burn.in , thin=thin, verbose = FALSE)
+
+u <- M1.leroux$params[, 1:3]
+v <- M1.bym$params[, 1:3]
+dim(u)
+dim(v)
+u
+v
+w <- cbind.data.frame(u, v) # Now repair 
+dim(w)
+w
+k <- nrow(w)
+w[k+1, ] <- w[k, ]
+w[k, 4:6] <- NA  ## Remove the rho for BYM model 
+w[k+1, 1:3] <- NA ## Remove the Sigma^2 for Leroux 
+rownames(w)[k+1] <- "sigma2"
+w
+
+DIC <- c(M1.leroux$mchoice[2], M1.leroux$mchoice[1], NA, M1.bym$mchoice[2], M1.bym$mchoice[1], NA)
+WAIC <- c(M1.leroux$mchoice[4], M1.leroux$mchoice[3], NA, M1.bym$mchoice[4], M1.bym$mchoice[3], NA)
+table10.4 <- rbind(w, DIC, WAIC)
+rownames(table10.4)[9:10] <- c("DIC", "WAIC")
+# xtable(10.4, digits=3)
+dput(table10.4, file=paste0(filepath, "table10.4.txt"))
+M1.leroux.v <- Bcartime(formula=f1, data=engtotals, scol="spaceid", W=Weng, 
+                      family="binomial", trials="nweek", model="leroux", 
+                      N=N, burn.in = burn.in , thin=thin, verbose = FALSE, validrows=vst)
+vresult10.4 <- M1.leroux.v$stats
+dput(vresult10.4, file=paste0(filepath, "validationstats_table10.4.txt"))
+
+} else {
+  table10.4 <- dget(file=paste0(filepath, "table10.4.txt"))
+  vresult10.4 <- dget(file=paste0(filepath, "validationstats_table10.4.txt"))
+}
+round(table10.4, 3)
+print(vresult10.4)
+```
+
+```{r m2spatial, echo=TRUE, eval=TRUE, results='hide', message=FALSE}
+f2 <-  covid ~ offset(logEdeaths) + jsa + log10(houseprice) + log(popdensity) + sqrt(no2) 
+
+if (longrun) {
+
+M2.leroux <- Bcartime(formula=f2, data=engtotals,
+            scol="spaceid",  model="leroux",  family="poisson", W=Weng,
+            N=N, burn.in = burn.in, thin=thin, verbose=FAlSE)
+
+M2.bym <- Bcartime(formula=f2, data=engtotals,
+                   scol="spaceid",  model="bym",  family="poisson", W=Weng,
+                   N=N, burn.in = burn.in, thin=thin, verbose=FALSE)
+u <- M2.leroux$params[, 1:3]
+v <- M2.bym$params[, 1:3]
+dim(u)
+dim(v)
+u
+v
+w <- cbind.data.frame(u, v) # Now repair 
+dim(w)
+w
+k <- nrow(w)
+w[k+1, ] <- w[k, ]
+w[k, 4:6] <- NA  ## Remove the rho for BYM model 
+w[k+1, 1:3] <- NA ## Remove the Sigma^2 for Leroux 
+rownames(w)[k+1] <- "sigma2"
+w
+
+DIC <- c(M2.leroux$mchoice[2], M2.leroux$mchoice[1], NA, M2.bym$mchoice[2], M2.bym$mchoice[1], NA)
+WAIC <- c(M2.leroux$mchoice[4], M2.leroux$mchoice[3], NA, M2.bym$mchoice[4], M2.bym$mchoice[3], NA)
+table10.5 <- rbind(w, DIC, WAIC)
+rownames(table10.5)[9:10] <- c("DIC", "WAIC")
+dput(table10.5, file=paste0(filepath, "table10.5.txt"))
+M2.leroux.v <- Bcartime(formula=f2, data=engtotals,
+            scol="spaceid",  model="leroux",  family="poisson", W=Weng,
+            N=N, burn.in = burn.in, thin=thin, verbose=FALSE, 
+            validrows=vst)
+vresult10.5 <- M2.leroux.v$stats
+dput(vresult10.5, file=paste0(filepath, "validationstats_table10.5.txt"))
+
+} else {
+  table10.5 <- dget(file=paste0(filepath, "table10.5.txt"))
+  vresult10.5 <- dget(file=paste0(filepath, "validationstats_table10.5.txt"))
+}
+round(table10.5, 3)
+print(vresult10.5 )
+```
+
+
+```{r mtable10.6, echo=TRUE, eval=TRUE, results='hide', message=FALSE}
+f3 <-  sqrt(no2) ~  jsa + log10(houseprice) + log(popdensity) 
+
+if (longrun) { 
+M3.leroux <- Bcartime(formula=f3, data=engtotals, scol="spaceid", W=Weng, 
+                      family="gaussian", model="leroux")
+w <- data.frame(M3.leroux$params[, 1:3])
+dim(w)
+w
+k <- nrow(w)
+DIC <- round(c(M3.leroux$mchoice[2], M3.leroux$mchoice[1], NA), 1)
+WAIC <- round(c(M3.leroux$mchoice[4], M3.leroux$mchoice[3], NA), 1)
+w[k+1, ] <- DIC
+w[k+2, ] <- WAIC
+table10.6 <- w
+dput(table10.6, file=paste0(filepath, "table10.6.txt"))
+} else {
+  table10.6 <- dget(file=paste0(filepath, "table10.6.txt"))
+}
+round(table10.6, 3)
+# remove fitted model object 
+rm(list=ls(pattern="M"))
+```
+
+
+```{r table10.7and10.8,  echo=TRUE, eval=TRUE, results='hide', message=FALSE}
+
+f1 <- highdeathsmr ~  jsa + log10(houseprice) + log(popdensity) 
+scol <- "spaceid"
+tcol <-  "Weeknumber"
+engdeaths$nweek <- rep(1, nrow(engdeaths))
+
+if (longrun) {
+M1st_linear <- Bcartime(formula=f1, data=engdeaths, scol=scol, tcol=tcol, trials="nweek", 
+               W=Weng, model="linear", family="binomial", package="CARBayesST", 
+               N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+# summary(M1st_linear)
+
+
+M1st_anova <- Bcartime(formula=f1, data=engdeaths, scol=scol, tcol=tcol, trials="nweek", 
+                        W=Weng, model="anova", family="binomial", package="CARBayesST", 
+                       N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+# summary(M1st_anova)
+# names(M1st_anova)
+M1st_anova_nointer <- Bcartime(formula=f1, data=engdeaths, scol=scol, tcol=tcol, trials="nweek", 
+                       W=Weng, model="anova", interaction=FALSE, family="binomial", 
+                       package="CARBayesST", N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+#summary(M1st_anova_nointer)
+
+
+M1st_sepspat <- Bcartime(formula=f1, data=engdeaths, scol=scol, tcol=tcol, trials="nweek", 
+                       W=Weng, model="sepspatial", family="binomial", 
+                       package="CARBayesST", N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+# summary(M1st_sepspat)
+
+
+M1st_ar <- Bcartime(formula=f1, data=engdeaths, scol=scol, tcol=tcol, trials="nweek", 
+                         W=Weng, model="ar", AR=1, family="binomial", package="CARBayesST", 
+                    N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+#summary(M1st_ar)
+
+u <- rbind(M1st_linear$mchoice, M1st_anova$mchoice, M1st_anova_nointer$mchoice, 
+           M1st_sepspat$mchoice, M1st_ar$mchoice)
+rownames(u) <- c("Linear", "AnovaI", "AnovanoI", "Separable", "AR (1)")
+table10.7 <- u[, c(2, 1, 4, 3)]
+dput(table10.7, file=paste0(filepath, "table10.7.txt"))
+table10.8 <- M1st_ar$params[, 1:3]
+dput(table10.8, file=paste0(filepath, "table10.8.txt"))
+} else {
+  table10.7 <- dget(file=paste0(filepath, "table10.7.txt"))
+  table10.8 <- dget(file=paste0(filepath, "table10.8.txt"))
+}
+round(table10.7, 1)
+round(table10.8, 3)
+
+```
+
+```{r table10.9and10, echo=TRUE, eval=TRUE, message=FALSE, results='hide'}
+
+f2 <-  covid ~ offset(logEdeaths) + jsa + log10(houseprice) + log(popdensity) + n0 + n1 + n2 + n3
+
+scol <- "spaceid"
+tcol <-  "Weeknumber"
+
+if (longrun) {
+M2st_linear <- Bcartime(formula=f2, data=engdeaths, scol=scol, tcol=tcol,  
+               W=Weng, model="linear", family="poisson", package="CARBayesST", 
+               N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+# summary(M2st_linear)
+
+
+M2st_anova <- Bcartime(formula=f2, data=engdeaths, scol=scol, tcol=tcol,  
+                        W=Weng, model="anova", family="poisson", package="CARBayesST", 
+                       N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+# summary(M2st_anova)
+
+
+M2st_anova_nointer <- Bcartime(formula=f2, data=engdeaths, scol=scol, tcol=tcol,  
+                       W=Weng, model="anova",interaction=FALSE, family="poisson", 
+                       package="CARBayesST", N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+# summary(M2st_anova_nointer)
+
+
+M2st_sepspat <- Bcartime(formula=f2, data=engdeaths, scol=scol, tcol=tcol, 
+               W=Weng, model="sepspatial",family="poisson", package="CARBayesST", 
+               N=N, burn.in=burn.in, thin=thin, verbose=F)
+# summary(M2st_sepspat)
+
+M2st_ar <- Bcartime(formula=f2, data=engdeaths, scol=scol, tcol=tcol,  
+                    W=Weng, model="ar", family="poisson", package="CARBayesST", 
+                    N=N, burn.in=burn.in, thin=thin, verbose=F)
+
+M2st_ar2 <- Bcartime(formula=f2, data=engdeaths, scol=scol, tcol=tcol,  
+                    W=Weng, model="ar", AR=2, family="poisson", package="CARBayesST", 
+                    N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+
+# summary(M2st_ar)
+u <- rbind(M2st_linear$mchoice, M2st_anova$mchoice, M2st_anova_nointer$mchoice, 
+           M2st_sepspat$mchoice, M2st_ar$mchoice, M2st_ar2$mchoice)
+
+rownames(u) <- c("Linear", "AnovaI", "AnovanoI", "Separable", "AR (1)", "AR (2)")
+
+table10.9 <- u[, c(2, 1, 4, 3)]
+table10.10 <- M2st_sepspat$params[, 1:3]
+
+dput(table10.9, file=paste0(filepath, "table10.9.txt"))
+dput(table10.10, file=paste0(filepath, "table10.10.txt"))
+} else {
+  table10.9 <- dget(file=paste0(filepath, "table10.9.txt"))
+  table10.10 <- dget(file=paste0(filepath, "table10.10.txt"))
+}
+round(table10.9, 1)
+round(table10.10, 3)
+
+```
+
+```{r table10.11, echo=TRUE, eval=TRUE, message=FALSE, results='hide'}
+
+
+if (longrun) { 
+  
+M2st_ar2.0 <- Bcartime(formula=f2, data=engdeaths, scol=scol, tcol=tcol,  
+                    W=Weng, model="ar", AR=2, family="poisson", package="CARBayesST", 
+                    N=N, burn.in=burn.in, thin=thin, verbose=FALSE,
+                    validrows=vs)
+  
+M2st_anova.0 <- Bcartime(formula=f2, data=engdeaths, scol=scol, tcol=tcol,  
+                       W=Weng, model="anova", family="poisson", package="CARBayesST", 
+                       N=N, burn.in=burn.in, thin=thin, verbose=FALSE,validrows=vs)
+
+table10.11 <- rbind(Anova=unlist(M2st_anova.0$stats), 
+                      AR = unlist(M2st_ar2.0$stats)) 
+dput(table10.11, file=paste0(filepath, "table10.11.txt"))
+} else {
+  table10.11 <- dget(file=paste0(filepath, "table10.11.txt"))
+}
+round(table10.11, 2)
+
+```
+
+# Table 10.14 
+
+```{r table10.14, echo=TRUE, eval=TRUE}
+
+if (longrun) {
+
+
+vs <- sample(nrow(engdeaths), 0.1 * nrow(engdeaths))
+
+f2 <-  covid ~ offset(logEdeaths) + jsa + log10(houseprice) + log(popdensity) + n0 + n1 +  n2 + n3
+
+scol <- "spaceid"
+tcol <-  "Weeknumber"
+
+M2st_ar2 <- Bcartime(formula=f2, data=engdeaths, scol=scol, tcol=tcol,  
+                     W=Weng, model="ar", AR=2, family="poisson", package="CARBayesST", 
+                     N=N, burn.in=burn.in, thin=thin, verbose=T)
+
+f20 <-  covid ~ offset(logEdeaths) + jsa + log10(houseprice) + log(popdensity) + n0
+model <- c("bym", "ar1")
+f2inla <-  covid ~  jsa + log10(houseprice) + log(popdensity) + n0 
+
+M2st_ar2.0 <- Bcartime(formula=f20, data=engdeaths, scol=scol, tcol=tcol,  
+                       W=Weng, model="ar", AR=2, family="poisson", package="CARBayesST", 
+                       N=N, burn.in=burn.in, thin=thin, 
+                       validrows=vs, verbose=T)
+M2stinla.0  <- Bcartime(data=engdeaths, formula=f2inla, W=Weng, scol =scol, 
+                        tcol=tcol,  offsetcol="logEdeaths",  model=model,  
+                        link="log", family="poisson", package="inla", 
+                        validrow=vs, N=2000, thin=1, burn.in=0) 
+yobspred <- M2st_ar2.0$yobs_preds
+names(yobspred)
+yobs <- yobspred$covid
+predsums <- get_validation_summaries(t(M2st_ar2.0$valpreds))
+dim(predsums)
+b <- obs_v_pred_plot(yobs, predsums, segments=T) 
+names(M2stinla.0)
+inlapredsums <- get_validation_summaries(t(M2stinla.0$valpreds))
+dim(inlapredsums)
+a <- obs_v_pred_plot(yobs, inlapredsums, segments=T) 
+inlavalid <- a$pwithseg
+ar2valid <- b$pwithseg
+table10.15 <- rbind(AR2=unlist(M2st_ar2.0$stats), 
+                    INLA = unlist(M2stinla.0$stats)) 
+dput(table10.15, file=paste0(filepath, "table10.15.txt"))
+save(M2st_ar2, inlavalid, ar2valid, file="engdeaths/two_engdeath_plots.RData")
+model <- c("bym", "ar1")
+f2inla <-  covid ~ jsa + log10(houseprice) + log(popdensity) + n0 + n1 + n2 + n3
+
+M2stinla <- Bcartime(data=engdeaths, formula=f2, W=Weng, scol =scol, tcol=tcol,  
+                     offsetcol="logEdeaths",  model=model,  link="log", family="poisson", 
+                     package="inla", N=2000, burn.in=0, thin =1) 
+summary(M2stinla )
+table10.14 <- rbind(M2stinla$params, M2stinla$mchoice[1:4])
+dput(table10.14, file=paste0(filepath, "table10.14.txt"))
+} else{
+  table10.14 <- dget(file=paste0(filepath, "table10.14.txt"))
+  load(file="engdeaths/two_engdeath_plots.RData")
+}
+
+
+```
+
+# Spatial residual plots 
+
+```{r residplots, echo=TRUE, eval=TRUE}
+
+M2st_ar2 <- Bcartime(formula=f2, data=engdeaths, scol= "spaceid", tcol="Weeknumber",  
+                     W=Weng, model="ar", AR=2, family="poisson", package="CARBayesST", 
+                     N=5000, burn.in=1000, thin=10, verbose=FALSE)
+
+summary(M2st_ar2)
+z <- M2st_ar2$residuals
+summary(z)
+
+modfit <- M2st_ar2$fit
+x <- modfit$samples
+names(x)
+u <- x$fitted
+dim(u)
+
+
+obsd <- engdeaths$covid
+k <- nrow(u)
+omat <- matrix(rep(obsd, k), byrow=TRUE,  nrow=k)
+dim(omat)
+
+resids <- omat - u 
+dim(resids)
+
+meds <- apply(resids, 2, median) 
+sds <- apply(resids, 2, sd) 
+summary(meds)
+summary(sds)
+length(meds)
+
+
+nla <- length(unique(engdeaths$Areacode))
+nla
+nweek <- nrow(engdeaths)/nla
+nweek  
+acodes <- rep(1:nla, each=nweek)
+
+callameans <- function(x, lapattern=acodes) {
+  u <- data.frame(x=x, lacodes=lapattern)
+  v <- summaryBy(x~lacodes, data=u)
+  as.vector(v$x.mean)
+}
+u <- callameans(resids[1,])
+
+a <- apply(resids, 1, callameans)
+dim(a)
+head(a[1:5, 1:5])
+
+rmeans <- apply(a, 1, mean)
+rsds <- apply(a, 1, sd)
+u1 <- unique(englamap[, c(1, 8)])
+head(u1)
+
+u <- data.frame(Areacode=unique(engdeaths$Areacode), rmeans=rmeans, rsds=rsds)
+head(u)
+v <- merge(u, u1)
+head(v)
+
+bdf <- merge(englamap, v, by.x="id", by.y="id")
+head(bdf)
+
+
+plimits <- range(bdf$rmeans)
+plimits
+
+
+com <- rev(c("red4", "red2","white", "dodgerblue2","dodgerblue4"))#colour palette
+p01 <-  ggplot(data=bdf, aes(x=long, y=lat, group = group, fill=rmeans)) +
+  scale_fill_gradientn(colours=com, na.value="black",limits=plimits)  +
+  geom_polygon(colour='black',size=0.25) +
+  geom_polygon(data=engregmap, aes(x=long, y=lat, group = group), fill=NA, colour='black',size=0.6)  +
+  coord_equal() + guides(fill=guide_colorbar(title="Residuals")) +
+  theme_bw()+theme(text=element_text(family="Times")) +
+  labs(title= "Spatially aggregated residuals",  x="", y = "", size=2.5) +
+  theme(axis.text.x = element_blank(), axis.text.y = element_blank(),axis.ticks = element_blank())   +
+  ggsn::scalebar(data=bdf, dist =50, location = "topleft", transform=FALSE,dist_unit = "km",
+                 st.dist = .05, st.size =4, height = .06, st.bottom=TRUE)
+p01
+ggsave(filename=paste0(figurepath, "chap10_spat_resid.png"))
+
+plimits <- range(bdf$rsds)
+p02 <-  ggplot(data=bdf, aes(x=long, y=lat, group = group, fill=rsds)) +
+  scale_fill_gradientn(colours=colpalette, na.value="black",limits=plimits)  +
+  geom_polygon(colour='black',size=0.25) +
+  geom_polygon(data=engregmap, aes(x=long, y=lat, group = group), fill=NA, colour='black',size=0.6)  +
+  coord_equal() + guides(fill=guide_colorbar(title="sd")) +
+  theme_bw()+theme(text=element_text(family="Times")) +
+  labs(title= "Sd of spatially aggregated residuals",  x="", y = "", size=2.5) +
+  theme(axis.text.x = element_blank(), axis.text.y = element_blank(),axis.ticks = element_blank())   +
+  ggsn::scalebar(data=bdf, dist =50, location = "topleft", transform=FALSE,  dist_unit = "km",
+                 st.dist = .05, st.size =4, height = .06, st.bottom=TRUE)
+p02
+ggsave(filename=paste0(figurepath, "chap10_spat_resid_sd.png"))
+
+```
+
+
+
+```{r figure10.3, echo=TRUE, eval=TRUE}
+
+allpost <- M2st_ar2$fit
+names(M2st_ar2)
+names(M2st_ar2$fit)
+names(M2st_ar2$fit$samples)
+
+names(allpost)
+
+a <- allpost$samples$fitted ## nsamp by nla*nweek
+class(a)
+b <- as.matrix(a)
+class(b)
+
+dim(b)
+
+calwkmeans <- function(x, wkpattern=engdeaths$Weeknumber) {
+  u <- data.frame(x=100000*x/engdeaths$popn, wkpattern=wkpattern)
+  # Transform to per 100,000
+  v <- summaryBy(x~wkpattern, data=u)
+  as.vector(v$x.mean)
+}
+u <- calwkmeans(b[1,])
+length(u) 
+summary(u)
+
+a <- apply(b, 1, calwkmeans)
+dim(a)
+
+fits <- apply(a, 1, mean) 
+# fits <- apply(a, 1, quantile, probs=c(0.025, 0.5, 0.975)) 
+fits
+lims <-  apply(a, 1, FUN=quantile, probs=c(0.025, 0.975))  
+lims
+head(lims)
+dim(lims)
+
+
+engdeaths$rcovid <- 100000*engdeaths$covid/engdeaths$popn 
+wkmeans <- summaryBy(rcovid ~ Weeknumber, data =engdeaths, FUN =mean) # Weekly mean 
+colnames(wkmeans)[2] <- "covid"
+head(wkmeans)
+
+# dataandfits <- cbind(wkmeans, fits=fits[2, ], lower=fits[1,],  upper=fits[3,])
+dataandfits <- cbind(wkmeans, fits=fits, lower=lims[1,],  upper=lims[2,])
+head(dataandfits)
+par(mfrow=c(1, 1))
+plot(covid~Weeknumber, data=dataandfits, pch="*", col="blue")
+lines(fits~Weeknumber, data=dataandfits, lty=1, col=2)
+lines(lower~Weeknumber, data=dataandfits, lty=2, col=3)
+lines(upper~Weeknumber, data=dataandfits, lty=2, col=3)
+# points(glm~Weeknumber, data=dataandfits, lty=2, col=4, pch=3)
+
+head(dataandfits)
+dataandfits
+
+k <- nrow(dataandfits)
+k
+adata <- data.frame(Weeknumber=rep(dataandfits$Weeknumber, 3), 
+                    fits=c(rep("fits", k), rep("lower", k), rep("upper", k)),  
+                    vfits=c(dataandfits$fits, dataandfits$lower, dataandfits$upper))
+adata$fits <- as.factor(adata$fits)
+adata$fits <- factor(adata$fits, levels=rev(levels(adata$fits)))
+head(adata)
+table(adata$fits)
+adata <- adata[adata$fits !="fits", ]
+
+adata <- data.frame(Weeknumber=rep(dataandfits$Weeknumber, 2), 
+                    intervals=c(rep("lower", k), rep("upper", k)),  
+                    vfits=c(dataandfits$lower, dataandfits$upper)) 
+adata$intervals <- as.factor(adata$intervals)
+adata$intervals <- factor(adata$intervals, levels=levels(adata$intervals))
+dim(adata)
+head(adata)
+table(adata$fits)
+pdata <- data.frame(Weeknumber=rep(dataandfits$Weeknumber, 2), 
+                    fits=c(rep("fitted", k), rep("observed", k)),  
+                    vfits=c(dataandfits$fits, dataandfits$covid))
+pdata$fits <- as.factor(pdata$fits)
+pdata$fits <- factor(pdata$fits, levels=levels(pdata$fits))
+levels(adata$fits)
+levels(pdata$fits)
+
+head(pdata)
+pwkfit <- ggplot() + 
+  geom_line(data=adata, aes(x=factor(Weeknumber), y=vfits, group=intervals, color=intervals)) +
+  geom_point(data=pdata, aes(x=factor(Weeknumber), y=vfits,  shape=fits)) + 
+  labs(x ="Week number", y = "Average number of covid deaths per 100,000")+
+  theme(legend.position=c(0.65, 0.5))
+pwkfit
+
+ggsave(paste0(figurepath, "weekly_death_rate_fitted.png"))
+
+```
+
+
+```{r table10.12and13, echo=TRUE, eval=TRUE}
+
+if (longrun){
+  
+f3 <-  sqrt(no2) ~  jsa + log10(houseprice) + log(popdensity) 
+
+scol <- "spaceid"
+tcol <-  "Weeknumber"
+
+M3st_linear <- Bcartime(formula=f3, data=engdeaths, scol=scol, tcol=tcol, 
+               W=Weng, model="linear", family="gaussian", package="CARBayesST", 
+               N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+summary(M3st_linear)
+
+M3st_anova <- Bcartime(formula=f3, data=engdeaths, scol=scol, tcol=tcol, 
+                        W=Weng, model="anova", family="gaussian", package="CARBayesST", 
+                       N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+summary(M3st_anova)
+
+
+M3st_ar <- Bcartime(formula=f3, data=engdeaths, scol=scol, tcol=tcol, 
+               W=Weng, model="ar", family="gaussian", package="CARBayesST", 
+               N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+summary(M3st_ar)
+
+
+M3st_ar2 <- Bcartime(formula=f3, data=engdeaths, scol=scol, tcol=tcol, 
+               W=Weng, model="ar", AR=2,  family="gaussian", package="CARBayesST", 
+               N=N, burn.in=burn.in, thin=thin, verbose=FALSE)
+summary(M3st_ar2)
+
+
+
+u <- rbind(M3st_linear$mchoice, M3st_anova$mchoice, M3st_ar$mchoice, 
+           M3st_ar2$mchoice)
+
+rownames(u) <- c("Linear", "Anova", "AR (1)", "AR (2)")
+
+table10.12 <- u[, c(2, 1, 4, 3)]
+table10.13  <- M3st_ar2$params[, 1:3]
+dput(table10.12, file=paste0(filepath, "table10.12.txt"))
+dput(table10.13, file=paste0(filepath, "table10.13.txt"))
+} else {
+  table10.12 <- dget(file=paste0(filepath, "table10.12.txt"))
+  table10.13 <- dget(file=paste0(filepath, "table10.13.txt"))
+}
+round(table10.12, 1)
+round(table10.13, 4)
+```
+
+
+```{r obsvpredplot, echo=FALSE, eval=TRUE, fig.height=5, fig.width=9, fig.cap="Predictions with 95% limits against observations for two models: AR (2) on the left panel and INLA on the right panel."}
+library(ggpubr)
+ggarrange(ar2valid, inlavalid, common.legend = TRUE, legend = "top", nrow = 1, ncol = 2)
+ggsave(filename = paste0(figurepath, "inlavAR2.png"))
+```
+
+
+```{r printtime, echo=TRUE, eval=TRUE}
+
+# All done 
+end.time <- proc.time()[3]
+comp.time<- (end.time-start.time)/60
+# comp.time<-fancy.time(comp.time)
+# With long run 122 minutes 
+print(comp.time)
+```
+
